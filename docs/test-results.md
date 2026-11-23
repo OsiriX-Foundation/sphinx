@@ -87,3 +87,80 @@ The VM and its Docker volumes live under `/tmp/sphinx-local-tools`.
 The filesystem project was left healthy and running. The S3 project was shut
 down with its named volumes retained. The Compose files and instructions are
 the reproducible deliverable.
+
+## Fresh-environment recovery and catalogue-free replay
+
+The archive disaster recovery drill ran on the same native ARM64 Docker
+runtime. `scripts/recovery-drill.sh` used a one-study, two-series synthetic
+fixture with three instances and three unique Compose projects. The filesystem
+baseline stayed running on its existing ports. The drill used ports 18080 and
+21112 on loopback and stopped only its own services.
+
+| Command or check | Observed result |
+| --- | --- |
+| `demo.py ingest --multi-series` and baseline `restore --keep-source` | Three successful C-STORE responses, exact study/series/SOP UID coverage, three WADO objects and three receiver objects |
+| `stop arc`, `pg_dump -Fc`, `slapcat -n 0` and `slapcat -b dc=dcm4che,dc=org` | Archive writes quiesced before the PostgreSQL and LDAP exports. Both LDAP configuration and directory data were captured |
+| Source `stop db ldap`, then `mc find` and `mc cat` | Enumerated three keys and read three usable DICOM Part 10 objects without querying PostgreSQL |
+| Fresh S3 bucket, `mc pipe` and `cmp` | All three restored keys and payloads matched the source bucket exactly |
+| `pg_restore` and offline `slapadd` in the fresh project | Imported the catalogue, LDAP config and LDAP data into separate volumes. The fresh archive started with new WildFly and archive volumes |
+| Rebuilt archive `ready` and `restore --keep-source` | C-ECHO passed. QIDO, WADO and the receiver each covered all three SOP Instance UIDs. All three WADO Part 10 files matched their pre-loss WADO files byte for byte |
+| Clean project `reingest` and `restore --keep-source` | With the source and rebuilt projects stopped, three objects discovered by S3 listing produced three successful C-STORE responses. QIDO, WADO and independent receiver verification passed |
+| Existing filesystem `ready`, `search`, and `restore --keep-source` | The earlier synthetic filesystem fixture remained discoverable and recoverable |
+
+The final drill retained its artifacts in Git-ignored `data/archive-dr-qH5NdWO1`
+and `data/run-wbd_y_7d`. The three drill projects were stopped with their
+volumes intact. The first LDAP import failed without an explicit
+`-F /etc/openldap/slapd.d`. The next attempt imported the LDIFs but slapd
+could not read `cn=config.ldif` under its runtime UID. The successful run
+applied the LDAP image's configured numeric UID/GID to both restored volumes.
+
+### Assertion and DICOM audit
+
+- QIDO checks the exact study match, instance count and SOP-to-series mapping.
+  WADO and receiver verification reject missing, unexpected and duplicate SOP
+  Instance UIDs. They also check the study and series UIDs, the consistency
+  of the file-meta SOP identifiers, original dataset attribute values, and
+  the SHA-256 of the pixel bytes. The drill requires transfer syntax to match
+  and separately reports added tags, full dataset equality and file SHA-256
+  equality.
+- Direct S3 downloads kept all three source **encoded datasets** byte for
+  byte. Comparing each Part 10 file by SOP UID showed differences in the
+  file-meta group length, Implementation Class UID and Implementation Version
+  Name. C-STORE sends the DICOM dataset, and the archive writes its own Part 10
+  file meta. The source file and its stored representation therefore had
+  different whole-file SHA-256 values for all three instances.
+- For WADO and independent C-STORE recovery, all source attributes and pixel
+  bytes matched and all three instances kept Explicit VR Little Endian.
+  WADO added Issuer of Patient ID (`0010,0021`) which the receiver retained.
+  Neither output matched the original source Part 10 files byte for byte.
+- The default `demo.py restore` deletes files only under the generated run's
+  `source/` directory. It checks accepted filenames, file types and manifest
+  hashes and rejects symlinks. The new drill uses `--keep-source` and moves
+  its own fixture into the evidence directory for comparison. The S3 LDAP
+  setup overwrites the test project's `fs1` descriptor, so the script runs it
+  only before the fresh source archive starts. The fresh target
+  `pg_restore --clean` replaces the image-seeded catalogue schema in that
+  target alone.
+
+### Dependency outage checks
+
+In a disposable S3 project holding the pilot synthetic study, `curl`
+queried the study by UID and requested the WADO multipart DICOM study. The
+filesystem baseline stayed available.
+
+| Condition | QIDO | WADO |
+| --- | --- | --- |
+| All dependencies up | HTTP 200 | HTTP 200 |
+| PostgreSQL stopped while archive running | HTTP 500 | HTTP 500 |
+| PostgreSQL restarted | HTTP 200 | HTTP 200 |
+| LDAP stopped while archive already initialized | HTTP 200 | HTTP 200 |
+| Archive restarted with LDAP still stopped | HTTP 500 | HTTP 500 |
+| LDAP restored, then archive restarted | HTTP 200 | HTTP 200 |
+
+The cold LDAP outage logged `CommunicationException: ldap:389` and WildFly
+service deployment failures. Warm LDAP outage results cover these two
+requests only.
+
+`dciodvfy` accepted all three final synthetic files. It warned about the
+empty Laterality field for the test patterns, as in the original fixture.
+Shell syntax checks, Python compilation and `git diff --check` also passed.

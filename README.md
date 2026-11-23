@@ -100,6 +100,10 @@ preservation separately. Part 10 file meta can be regenerated during C-STORE.
 The [S3 procedure](docs/s3.md) uses a second Compose project and a private
 Silo bucket. Both variants use the same loopback ports, so run one at a time.
 
+The [fresh-environment recovery drill](docs/recovery-drill.md) exports
+backups and rebuilds the S3 archive in a separate project. It also tests
+re-ingesting bucket objects into a clean catalogue.
+
 ## Stop
 
 ```sh

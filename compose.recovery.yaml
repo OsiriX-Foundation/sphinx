@@ -1,0 +1,6 @@
+# Additional loopback ports let the original filesystem demonstrator stay up.
+services:
+  arc:
+    ports: !override
+      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:21112:11112"
