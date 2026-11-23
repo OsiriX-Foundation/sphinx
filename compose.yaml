@@ -1,0 +1,86 @@
+name: sphinx-phase1-demo
+
+services:
+  ldap:
+    image: dcm4che/slapd-dcm4chee:2.6.15-35.2
+    environment:
+      LDAP_ROOTPASS: ${LDAP_ROOTPASS:?Set LDAP_ROOTPASS in .env}
+      LDAP_CONFIGPASS: ${LDAP_CONFIGPASS:?Set LDAP_CONFIGPASS in .env}
+      ARCHIVE_HOST: arc
+      STORAGE_DIR: /storage/fs1
+    volumes:
+      - ldap-data:/var/lib/openldap/openldap-data
+      - ldap-config:/etc/openldap/slapd.d
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          ldapsearch -x -H ldap://127.0.0.1:389 -D cn=admin,dc=dcm4che,dc=org
+          -w "$$LDAP_ROOTPASS" -b "dicomDeviceName=dcm4chee-arc,cn=Devices,cn=DICOM Configuration,dc=dcm4che,dc=org"
+          -s base dn >/dev/null
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  db:
+    image: dcm4che/postgres-dcm4chee:17.9-35
+    environment:
+      POSTGRES_DB: pacsdb
+      POSTGRES_USER: pacs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$$POSTGRES_USER"
+          -d "$$POSTGRES_DB" -Atqc 'SELECT 1 FROM study LIMIT 0' >/dev/null
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  arc:
+    image: dcm4che/dcm4chee-arc-psql:5.35.2
+    depends_on:
+      ldap:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    environment:
+      LDAP_URL: ldap://ldap:389
+      LDAP_ROOTPASS: ${LDAP_ROOTPASS:?Set LDAP_ROOTPASS in .env}
+      POSTGRES_HOST: db
+      POSTGRES_DB: pacsdb
+      POSTGRES_USER: pacs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      WILDFLY_CHOWN: /storage
+      WILDFLY_DEPLOY_UI: "false"
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:11112:11112"
+    volumes:
+      - wildfly-data:/opt/wildfly/standalone
+      - archive-data:/storage
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --output
+        - /dev/null
+        - --header
+        - "Accept: application/dicom+json"
+        - "http://127.0.0.1:8080/dcm4chee-arc/aets/DCM4CHEE/rs/studies?limit=1"
+      interval: 5s
+      timeout: 4s
+      start_period: 30s
+      retries: 24
+
+volumes:
+  ldap-data:
+  ldap-config:
+  postgres-data:
+  wildfly-data:
+  archive-data:

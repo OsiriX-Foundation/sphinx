@@ -1,0 +1,13 @@
+/.idea/
+/.venv/
+__pycache__/
+.env
+.env.*
+!.env.example
+/data/*
+!/data/.gitkeep
+*.dcm
+*.dicom
+*.dcm.gz
+*.pem
+*.key
