@@ -115,3 +115,8 @@ The [architecture](docs/architecture.md) explains the storage and catalogue
 dependencies. See [test results](docs/test-results.md) for the observed
 recovery evidence, [blockers](docs/blockers.md) for open checks and
 [ADR-001](docs/decisions.md) for the archive choice.
+
+## License
+
+The demonstrator code and documentation are available under the [MIT License](LICENSE).
+Third-party dependencies and container images retain their respective licenses.
