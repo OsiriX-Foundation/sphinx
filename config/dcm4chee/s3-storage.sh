@@ -9,7 +9,7 @@ for value in "$SPHINX_S3_ACCESS_KEY" "$SPHINX_S3_SECRET_KEY"; do
     esac
 done
 
-ldapmodify -x -H ldap://127.0.0.1:389 -D cn=admin,dc=dcm4che,dc=org -w "$LDAP_ROOTPASS" <<LDIF
+ldapmodify -x -H "${LDAP_URL:-ldap://127.0.0.1:389}" -D cn=admin,dc=dcm4che,dc=org -w "$LDAP_ROOTPASS" <<LDIF
 dn: dcmStorageID=fs1,dicomDeviceName=dcm4chee-arc,cn=Devices,cn=DICOM Configuration,dc=dcm4che,dc=org
 changetype: modify
 replace: dcmURI
