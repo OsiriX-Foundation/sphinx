@@ -102,6 +102,8 @@ def fingerprint(path):
 
 
 def check_objects(paths, expected, label):
+    if not expected:
+        raise ValueError(f"{label}: manifest has no instances")
     actual = {}
     for path in paths:
         item = fingerprint(path)
@@ -109,7 +111,9 @@ def check_objects(paths, expected, label):
             raise ValueError(f"{label}: duplicate SOP Instance UID {item['sop']}")
         actual[item["sop"]] = item
     if actual.keys() != expected.keys():
-        raise ValueError(f"{label}: unexpected instance UIDs: {sorted(actual)}")
+        missing = sorted(expected.keys() - actual.keys())
+        extra = sorted(actual.keys() - expected.keys())
+        raise ValueError(f"{label}: missing SOP Instance UIDs {missing}, unexpected {extra}")
     exact_files, preserved_syntaxes, exact_datasets = 0, 0, 0
     added_tags = set()
     for sop, original in expected.items():
@@ -208,6 +212,8 @@ def load_run(run):
 def search(manifest):
     study = manifest["study"]
     expected = manifest["instances"]
+    if not expected:
+        raise ValueError("QIDO: manifest has no instances")
     rows = qido(f"/studies?{urlencode({'StudyInstanceUID': study})}")
     if [row[STUDY_UID]["Value"][0] for row in rows] != [study]:
         raise ValueError(f"QIDO did not return exactly the requested study {study}")
