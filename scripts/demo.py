@@ -7,6 +7,7 @@ from email import policy
 from email.parser import BytesParser
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,9 +29,11 @@ from pynetdicom.sop_class import Verification
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 HOST = "127.0.0.1"
-ARCHIVE_AE, ARCHIVE_PORT = "DCM4CHEE", 11112
+ARCHIVE_AE = "DCM4CHEE"
+ARCHIVE_PORT = int(os.environ.get("SPHINX_DICOM_PORT", "11112"))
+HTTP_PORT = int(os.environ.get("SPHINX_HTTP_PORT", "8080"))
 RECEIVER_AE, RECEIVER_PORT = "SPHINX_RESTORE", 11113
-DICOMWEB = f"http://{HOST}:8080/dcm4chee-arc/aets/{ARCHIVE_AE}/rs"
+DICOMWEB = f"http://{HOST}:{HTTP_PORT}/dcm4chee-arc/aets/{ARCHIVE_AE}/rs"
 STUDY_UID, SERIES_UID, SOP_UID = "0020000D", "0020000E", "00080018"
 SOURCE_NAMES = {"1.dcm", "2.dcm", "3.dcm"}
 
@@ -43,8 +46,9 @@ def files(directory):
     return sorted(path for path in directory.iterdir() if path.is_file())
 
 
-def make_source(directory):
+def make_source(directory, multi_series=False):
     study, series = generate_uid(), generate_uid()
+    second_series = generate_uid() if multi_series else series
     for number in range(1, 4):
         path = directory / f"{number}.dcm"
         meta = FileMetaDataset()
@@ -53,12 +57,14 @@ def make_source(directory):
         meta.TransferSyntaxUID = ExplicitVRLittleEndian
         ds = FileDataset(path, {}, file_meta=meta, preamble=bytes(128))
         ds.SOPClassUID, ds.SOPInstanceUID = meta.MediaStorageSOPClassUID, meta.MediaStorageSOPInstanceUID
-        ds.StudyInstanceUID, ds.SeriesInstanceUID = study, series
+        series_number = 2 if multi_series and number == 3 else 1
+        ds.StudyInstanceUID = study
+        ds.SeriesInstanceUID = second_series if series_number == 2 else series
         ds.PatientName, ds.PatientID = "SPHINX^Synthetic", f"SYN-{study[-12:]}"
         ds.PatientBirthDate, ds.PatientSex = "", ""
         ds.StudyDate, ds.StudyTime = "20260101", "120000"
         ds.AccessionNumber, ds.ReferringPhysicianName = "", ""
-        ds.StudyID, ds.SeriesNumber, ds.InstanceNumber = "SPHINX", 1, number
+        ds.StudyID, ds.SeriesNumber, ds.InstanceNumber = "SPHINX", series_number, number
         ds.StudyDescription, ds.SeriesDescription = "SPHINX recovery fixture", "Synthetic gradients"
         ds.Modality, ds.ConversionType, ds.Manufacturer = "OT", "SYN", "SPHINX test fixture"
         ds.Laterality = ""
@@ -126,6 +132,8 @@ def check_objects(paths, expected, label):
     print(f"  Observed transfer syntaxes: {sorted({item['transfer_syntax'] for item in actual.values()})}")
     if added_tags:
         print(f"  Added dataset tags: {', '.join(sorted(added_tags))}")
+    if preserved_syntaxes != len(expected):
+        raise ValueError(f"{label}: transfer syntax changed")
 
 
 @contextmanager
@@ -210,12 +218,12 @@ def search(manifest):
     print(f"QIDO: study {study}, {len(actual)} matching instances", file=sys.stderr)
 
 
-def ingest():
+def ingest(multi_series=False):
     ready()
     path = Path(tempfile.mkdtemp(prefix="run-", dir=DATA))
     directory = path / "source"
     directory.mkdir()
-    study = make_source(directory)
+    study = make_source(directory, multi_series)
     instances = {item["sop"]: item for item in map(fingerprint, files(directory))}
     (path / "manifest.json").write_text(json.dumps({"study": study, "instances": instances}, indent=2) + "\n")
     print(f"Run directory: {path}", flush=True)
@@ -258,11 +266,12 @@ def retrieve(study, directory):
         (directory / f"{n}.dcm").write_bytes(part.get_payload(decode=True))
 
 
-def restore(path, manifest):
+def restore(path, manifest, keep_source=False):
     search(manifest)
     expected = manifest["instances"]
-    remove_source(path, expected)
-    search(manifest)
+    if not keep_source:
+        remove_source(path, expected)
+        search(manifest)
     attempt = Path(tempfile.mkdtemp(prefix="restore-", dir=path))
     exported, received = attempt / "exported", attempt / "received"
     exported.mkdir()
@@ -300,26 +309,36 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
     actions.add_parser("ready", help="verify archive C-ECHO and a QIDO query")
-    actions.add_parser("ingest", help="generate a fresh synthetic study, C-STORE it and check the index")
+    ingest_command = actions.add_parser("ingest", help="generate a fresh synthetic study, C-STORE it and check the index")
+    ingest_command.add_argument("--multi-series", action="store_true", help="split the fixture across two series")
     actions.add_parser("search", help="find the study and its instances in the archive").add_argument("run")
-    actions.add_parser("restore", help="simulate source loss, retrieve and verify on a separate SCP").add_argument("run")
+    restore_command = actions.add_parser("restore", help="retrieve and verify on a separate SCP")
+    restore_command.add_argument("run")
+    restore_command.add_argument("--keep-source", action="store_true", help="preserve the synthetic source for comparison")
     verify = actions.add_parser("verify", help="compare a directory of recovered objects with the manifest")
     verify.add_argument("run")
     verify.add_argument("directory", type=Path)
+    reingest = actions.add_parser("reingest", help="C-STORE verified objects from an existing synthetic run")
+    reingest.add_argument("run")
+    reingest.add_argument("directory", type=Path)
     args = parser.parse_args()
     try:
         if args.action == "ready":
             ready()
         elif args.action == "ingest":
-            ingest()
+            ingest(args.multi_series)
         else:
             path, manifest = load_run(args.run)
             if args.action == "search":
                 search(manifest)
-            elif args.action == "verify":
-                check_objects(files(args.directory), manifest["instances"], "DICOM object verification")
+            elif args.action in ("verify", "reingest"):
+                objects = files(args.directory)
+                check_objects(objects, manifest["instances"], "DICOM object verification")
+                if args.action == "reingest":
+                    send(objects, ARCHIVE_PORT, ARCHIVE_AE, "SPHINX_REPLAY")
+                    search(manifest)
             else:
-                restore(path, manifest)
+                restore(path, manifest, args.keep_source)
     except (KeyError, OSError, RuntimeError, ValueError) as exc:
         parser.exit(1, f"{args.action} failed: {exc}\n")
 

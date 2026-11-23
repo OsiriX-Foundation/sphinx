@@ -30,14 +30,23 @@ object key need not encode readable DICOM UIDs. [Location entity in 5.35.2](http
 
 If PostgreSQL is lost, normal QIDO and WADO lose the index they use to find
 instances and locate the objects. With complete standalone Part 10 objects and
-storage access, an operator could list and download objects, read their
-embedded identifiers and re-ingest them into an empty archive. This would
-create a new catalogue and would need reconciliation for completeness,
-duplicates, rejections and metadata managed only in the old catalogue.
+storage access, an operator can list and download objects, read their embedded
+identifiers and re-ingest them into an empty archive. Replay creates a new
+catalogue from the DICOM contents. Reconciliation would still be needed for
+completeness, duplicates, rejections and metadata managed only in the old
+catalogue.
 
 Recovery of the original archive would require a coordinated backup of the
 PostgreSQL database, LDAP data and configuration (including schema and storage
 descriptors), required deployment settings and credentials, and the DICOM
 objects. Retain the versions and verify that the database location paths
-resolve to the corresponding object versions. Archive-host loss, database/LDAP
-restore and catalogue reconstruction are separate tests.
+resolve to the corresponding object versions. The [recovery drill](recovery-drill.md)
+quiesces writes and copies those inputs into a separate local project. The
+restore relies on the database role and password, LDAP bind credentials,
+and the S3 credential and store mapping in the descriptor. WildFly and archive
+volumes are initialized fresh in the drill.
+
+In the dependency outage checks, PostgreSQL loss interrupted QIDO and WADO
+on the running archive. The already initialized archive answered both
+requests with LDAP stopped, but a cold start required LDAP. See the
+[recorded outage checks](test-results.md#dependency-outage-checks).
