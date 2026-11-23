@@ -6,6 +6,9 @@ Test whether a stand-alone DICOM backup can accept a synthetic study, find and
 export it after simulated loss at the source, and restore it into a separate
 DICOM system. This local environment accepts synthetic images only.
 
+For a running S3-backed archive with independently usable DICOM and DICOMweb
+endpoints, see the [service deployment runbook](docs/deployment.md).
+
 ## Prerequisites and setup
 
 - A local Docker Engine 28 or newer with Docker Compose v2 or newer.

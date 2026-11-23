@@ -1,5 +1,29 @@
 # Architecture and recoverability
 
+## S3 service deployment
+
+```mermaid
+flowchart LR
+    Source[DICOM sender] -->|C-STORE| Archive[dcm4chee Archive 5]
+    Client[DICOMweb client] <-->|QIDO-RS and WADO-RS| Archive
+    subgraph Compose[SPHINX Compose project]
+        Archive -->|Catalogue and object locations| DB[(PostgreSQL)]
+        Archive -->|AEs and storage descriptors| LDAP[(OpenLDAP)]
+        Archive -->|DICOM object payloads| S3[(Silo S3)]
+        Bucket[Bucket initialization] --> S3
+        Storage[Storage configuration] --> LDAP
+    end
+```
+
+Compose runs four persistent services and two initialization jobs. PostgreSQL
+stores the catalogue. OpenLDAP supplies the archive configuration. Silo
+stores the DICOM objects. dcm4chee exposes DIMSE and DICOMweb on loopback.
+The startup sequence creates the private bucket, binds the archive's storage
+descriptor to that bucket, and waits for dcm4chee to answer QIDO. Senders
+and clients use the archive endpoints directly. [Deployment runbook](deployment.md)
+
+## Filesystem baseline and recovery clients
+
 ```text
 Synthetic source -- C-STORE --> dcm4chee Archive 5
                                   |-- PostgreSQL catalogue
@@ -14,9 +38,10 @@ The host test client saves a manifest of identifiers and SHA-256 digests before
 simulated source loss. The receiver writes its own DICOM files and has no
 connection to the archive database, LDAP or storage volumes.
 
-The [S3 variant](s3.md) runs in a separate Compose project. Its LDAP descriptor
-points the object store to a private Silo bucket, backed by a named volume.
-PostgreSQL remains the index in both variants.
+The [S3 test variant](s3.md) and [recovery drill](recovery-drill.md) use
+independent Compose projects. They exercise the same archive and storage
+components. The Python runner generates synthetic fixtures and verifies
+their recovery from those services.
 
 ## Catalogue and object storage
 
