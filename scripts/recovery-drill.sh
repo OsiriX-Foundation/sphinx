@@ -37,8 +37,9 @@ dst config --quiet
 replay config --quiet
 for project in "$source_project" "$target_project" "$replay_project"; do
     label="label=com.docker.compose.project=$project"
-    if [[ -n "$(docker ps -aq --filter "$label")" ||
-          -n "$(docker volume ls -q --filter "$label")" ]]; then
+    containers=$(docker ps -aq --filter "$label")
+    volumes=$(docker volume ls -q --filter "$label")
+    if [[ -n "$containers" || -n "$volumes" ]]; then
         echo "Refusing to reuse project $project" >&2
         exit 1
     fi
